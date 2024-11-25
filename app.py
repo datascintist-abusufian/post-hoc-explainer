@@ -217,11 +217,9 @@ def main():
         st.markdown("---")
         st.markdown("""
         ### About
-        This dashboard provides insights into heart disease prediction using:
-        - Random Forest Classification
-        - SHAP (SHapley Additive exPlanations)
-        - Feature Engineering
-        - Advanced Visualizations
+        Post hoc explanation dashboard provides interactive insights into heart disease prediction using:
+        advanced indepth scientific analysis for trust worthy and transparent to the clinicial in terms of proper decision making.
+        It helps to clinical expert to take a decision on the basis What input influenced on prediction!!
         """)
 
     # Load data
