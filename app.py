@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import shap
-from lifelines import KaplanMeierFitter
-from lifelines import CoxPHFitter
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
@@ -111,6 +109,36 @@ class HeartDiseaseAnalyzer:
             'report': classification_report(y_test, y_pred, output_dict=True)
         }
 
+    def plot_confusion_matrix(self, y_true, y_pred):
+        cm = confusion_matrix(y_true, y_pred)
+        fig = plt.figure(figsize=(8, 6))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=['No Disease', 'Disease'],
+                   yticklabels=['No Disease', 'Disease'])
+        plt.title('Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        return fig
+
+    def plot_roc_curve(self, y_true, y_prob):
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        roc_auc = auc(fpr, tpr)
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=fpr, y=tpr,
+                               name=f'ROC curve (AUC = {roc_auc:.2f})'))
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1],
+                               line=dict(dash='dash'), name='Random'))
+        fig.update_layout(
+            title='ROC Curve',
+            xaxis_title='False Positive Rate',
+            yaxis_title='True Positive Rate',
+            yaxis=dict(scaleanchor="x", scaleratio=1),
+            xaxis=dict(constrain='domain'),
+            width=700, height=500
+        )
+        return fig
+
     def plot_shap_summary(self):
         shap_values = self.explainer.shap_values(self.X_train)
         fig = plt.figure(figsize=(10, 8))
@@ -130,32 +158,6 @@ class HeartDiseaseAnalyzer:
         plt.title(f"SHAP Dependence Plot for {feature_name}")
         return fig
 
-    # ... [Previous plotting methods remain the same] ...
-
-def plot_survival_curves(data):
-    kmf = KaplanMeierFitter()
-    
-    # Create survival data
-    duration = data['age']
-    event_observed = data['cardio']
-    
-    fig = plt.figure(figsize=(10, 6))
-    
-    # Plot survival curves for different groups
-    for cholesterol in [1, 2, 3]:
-        mask = data['cholesterol'] == cholesterol
-        kmf.fit(
-            duration[mask], 
-            event_observed[mask], 
-            label=f'Cholesterol Level {cholesterol}'
-        )
-        kmf.plot()
-    
-    plt.title('Survival Curves by Cholesterol Level')
-    plt.xlabel('Age (years)')
-    plt.ylabel('Survival probability')
-    return fig
-
 def main():
     st.title("🫀 Advanced Heart Disease Analysis Dashboard")
     
@@ -165,7 +167,7 @@ def main():
         
         analysis_type = st.selectbox(
             "Select Analysis Type",
-            ["Model Performance", "SHAP Analysis", "Survival Analysis"]
+            ["Model Performance", "SHAP Analysis"]
         )
         
         n_estimators = st.slider("Number of trees", 50, 200, 100)
@@ -206,7 +208,7 @@ def main():
             with col2:
                 st.pyplot(analyzer.plot_confusion_matrix(y_test, metrics['predictions']))
 
-    elif analysis_type == "SHAP Analysis":
+    else:  # SHAP Analysis
         st.header("🎯 SHAP Feature Analysis")
         
         if st.button("🔍 Generate SHAP Analysis"):
@@ -221,28 +223,11 @@ def main():
                 feature = st.selectbox("Select feature for dependence plot:", analyzer.feature_names)
                 st.pyplot(analyzer.plot_shap_dependence(feature))
 
-    else:  # Survival Analysis
-        st.header("📈 Survival Analysis")
-        
-        if st.button("🔍 Generate Survival Analysis"):
-            with st.spinner("Calculating survival curves..."):
-                st.pyplot(plot_survival_curves(data))
-                
-                # Cox Proportional Hazards Model
-                cph = CoxPHFitter()
-                survival_data = data.copy()
-                survival_data['duration'] = survival_data['age']
-                survival_data['event'] = survival_data['cardio']
-                
-                cph.fit(survival_data, 'duration', 'event')
-                st.write("Cox Proportional Hazards Model Summary:")
-                st.write(cph.print_summary())
-
     st.markdown("---")
     st.markdown(
         """<div style='text-align: center; color: #666;'>
             <p>Advanced Heart Disease Analysis Dashboard | Version 2.0</p>
-            <p>Featuring SHAP Explanations and Survival Analysis</p>
+            <p>Featuring SHAP Explanations and Model Interpretability</p>
         </div>""",
         unsafe_allow_html=True
     )
