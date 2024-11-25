@@ -60,9 +60,9 @@ class DataLoader:
                 'cholesterol': 'int8', 'gluc': 'int8', 'smoke': 'int8',
                 'alco': 'int8', 'active': 'int8', 'cardio': 'int8'
             }
-            url = "https://raw.githubusercontent.com/datascintist-abusufian/Post-hoc-explanation-cardio-phenotype-interpretability/main/cardio_train.csv"
+            url = "https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/blob/main/data/cardio_train.csv"
             data = pd.read_csv(url, sep=';', dtype=dtypes)
-            
+           
             # Preprocess age from days to years
             data['age'] = data['age'] / 365.25
             
