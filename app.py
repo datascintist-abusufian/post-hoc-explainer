@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import shap
-from lifelines import KaplanMeierFitter, CoxPHFitter
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
@@ -56,6 +55,12 @@ st.markdown("""
     .gif-container img:hover {
         transform: scale(1.02);
     }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,6 +81,7 @@ def load_data():
         data['age'] = data['age'] / 365.25
         data['bmi'] = data['weight'] / ((data['height']/100) ** 2)
         data['pulse_pressure'] = data['ap_hi'] - data['ap_lo']
+        data['map'] = data['ap_lo'] + (data['pulse_pressure'] / 3)  # Mean Arterial Pressure
         
         return data
     except Exception as e:
@@ -96,7 +102,7 @@ class ModelAnalyzer:
         """Prepare data for modeling with caching"""
         features = ['age', 'gender', 'height', 'weight', 'ap_hi', 'ap_lo',
                    'cholesterol', 'gluc', 'smoke', 'alco', 'active',
-                   'bmi', 'pulse_pressure']
+                   'bmi', 'pulse_pressure', 'map']
         
         X = data[features]
         y = data['cardio']
@@ -138,66 +144,62 @@ class ModelAnalyzer:
             'feature_importance': dict(zip(self.feature_names, 
                                         self.model.feature_importances_))
         }
-      
-class SurvivalAnalyzer:
-    def __init__(self):
-        self.kmf = KaplanMeierFitter()
-        self.cph = CoxPHFitter()
 
+class SurvivalAnalyzer:
     @st.cache_data
     def analyze(self, data, group_col=None):
-        """Run survival analysis with caching"""
-        # Prepare survival data
-        survival_data = data.copy()
-        survival_data['duration'] = survival_data['age']
-        survival_data['event'] = survival_data['cardio']
-        
+        """Run survival analysis using custom implementation"""
         fig = plt.figure(figsize=(10, 6))
         
         if group_col:
             for value in sorted(data[group_col].unique()):
                 mask = data[group_col] == value
-                self.kmf.fit(
-                    durations=survival_data[mask]['duration'],
-                    events=survival_data[mask]['event'],
-                    label=f'{group_col}={value}'
+                group_data = data[mask]
+                
+                # Calculate survival curve
+                age_groups = pd.qcut(group_data['age'], q=20)
+                survival_prob = 1 - group_data.groupby(age_groups)['cardio'].mean()
+                
+                plt.plot(
+                    [group.right for group in survival_prob.index], 
+                    survival_prob.values,
+                    label=f'{group_col}={value}',
+                    marker='o',
+                    markersize=4
                 )
-                self.kmf.plot()
         else:
-            self.kmf.fit(
-                durations=survival_data['duration'],
-                events=survival_data['event'],
-                label='Overall'
-            )
-            self.kmf.plot()
+            age_groups = pd.qcut(data['age'], q=20)
+            survival_prob = 1 - data.groupby(age_groups)['cardio'].mean()
             
-        plt.title('Kaplan-Meier Survival Analysis')
+            plt.plot(
+                [group.right for group in survival_prob.index], 
+                survival_prob.values,
+                label='Overall',
+                marker='o',
+                markersize=4
+            )
+            
+        plt.title('Survival Analysis')
         plt.xlabel('Age (years)')
         plt.ylabel('Survival probability')
         plt.grid(True)
+        plt.legend()
         return fig
 
     @st.cache_data
-    def run_cox_analysis(self, data):
-        """Run Cox Proportional Hazards analysis with caching"""
-        survival_data = data.copy()
-        survival_data['duration'] = survival_data['age']
-        survival_data['event'] = survival_data['cardio']
+    def analyze_risk_factors(self, data):
+        """Analyze risk factors impact on survival"""
+        risk_factors = ['cholesterol', 'gluc', 'smoke', 'alco', 'active']
+        results = {}
         
-        features = ['gender', 'bmi', 'cholesterol', 'gluc', 'smoke', 
-                   'alco', 'active', 'pulse_pressure']
-        
-        analysis_data = survival_data[features + ['duration', 'event']]
-        
-        self.cph.fit(analysis_data, 'duration', 'event')
-        summary = self.cph.print_summary()
-        
-        # Create partial effects plot
-        fig = plt.figure(figsize=(10, 6))
-        self.cph.plot_partial_effects('bmi', values=[20, 25, 30, 35])
-        plt.title('Partial Effects of BMI on Survival')
-        
-        return summary, fig
+        for factor in risk_factors:
+            # Calculate risk ratio
+            risk_high = data[data[factor] > 1]['cardio'].mean()
+            risk_low = data[data[factor] == 1]['cardio'].mean()
+            risk_ratio = risk_high / risk_low if risk_low > 0 else 1
+            results[factor] = risk_ratio
+            
+        return pd.Series(results).sort_values(ascending=False)
 
 @st.cache_data
 def plot_confusion_matrix(y_true, y_pred):
@@ -271,20 +273,35 @@ def main():
         st.header("📋 Data Overview")
         
         col1, col2, col3 = st.columns(3)
-        col1.metric("Total Records", f"{len(data):,}")
-        col2.metric("Features", len(data.columns) - 1)
-        col3.metric("Disease Prevalence", f"{(data['cardio'].mean() * 100):.1f}%")
+        with col1:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("Total Records", f"{len(data):,}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        with col2:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("Features", len(data.columns) - 1)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with col3:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("Disease Prevalence", f"{(data['cardio'].mean() * 100):.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
         
         st.subheader("Sample Data")
         st.dataframe(data.head())
         
         st.subheader("Feature Distributions")
-        feature = st.selectbox("Select feature:", data.columns)
+        col1, col2 = st.columns(2)
+        with col1:
+            feature = st.selectbox("Select feature:", data.columns)
+        with col2:
+            bin_count = st.slider("Number of bins", 10, 100, 30)
+        
         fig = px.histogram(data, x=feature, color='cardio',
-                         title=f"Distribution of {feature}")
+                         nbins=bin_count,
+                         title=f"Distribution of {feature}",
+                         labels={'cardio': 'Heart Disease'})
         st.plotly_chart(fig)
 
-        # Statistical Summary
         if st.checkbox("Show Statistical Summary"):
             st.subheader("Statistical Summary")
             st.dataframe(data.describe())
@@ -322,7 +339,15 @@ def main():
                 st.pyplot(plot_confusion_matrix(y_test, metrics['predictions']))
             
             st.subheader("Classification Report")
-            st.dataframe(pd.DataFrame(metrics['report']).transpose())
+            report_df = pd.DataFrame(metrics['report']).transpose()
+            st.dataframe(report_df)
+
+            # Feature importance (continued)
+            fig = px.bar(importance_df, x='Feature', y='Importance',
+                        title='Feature Importance',
+                        color='Importance',
+                        color_continuous_scale='viridis')
+            st.plotly_chart(fig)
 
     elif analysis_type == "SHAP Analysis":
         st.header("🎯 SHAP Analysis")
@@ -338,48 +363,62 @@ def main():
                 shap.summary_plot(shap_values[1], st.session_state.model_analyzer.X_train, show=False)
                 st.pyplot(fig)
                 
-                if st.checkbox("Show Feature Dependence Plots"):
-                    feature = st.selectbox("Select feature:", 
-                                         st.session_state.model_analyzer.feature_names)
-                    fig = plt.figure(figsize=(10, 6))
-                    shap.dependence_plot(feature, shap_values[1], 
-                                       st.session_state.model_analyzer.X_train)
-                    st.pyplot(fig)
+                st.subheader("Feature Dependence Analysis")
+                feature = st.selectbox("Select feature for detailed analysis:", 
+                                     st.session_state.model_analyzer.feature_names)
+                
+                fig = plt.figure(figsize=(10, 6))
+                shap.dependence_plot(
+                    feature, 
+                    shap_values[1], 
+                    st.session_state.model_analyzer.X_train,
+                    show=False
+                )
+                st.pyplot(fig)
 
     elif analysis_type == "Feature Engineering":
         st.header("🔧 Feature Engineering")
         
-        st.write("### Engineered Features:")
-        st.write("- BMI (Body Mass Index)")
-        st.write("- Pulse Pressure (Systolic - Diastolic)")
+        st.write("""
+        ### Engineered Features:
+        - **BMI (Body Mass Index)**: Calculated from height and weight
+        - **Pulse Pressure**: Difference between systolic and diastolic pressure
+        - **MAP (Mean Arterial Pressure)**: Average blood pressure during cardiac cycle
+        """)
         
+        # Interactive feature analysis
+        st.subheader("Interactive Feature Analysis")
         col1, col2 = st.columns(2)
         with col1:
-            fig = px.scatter(data, x='bmi', y='age', color='cardio',
-                           title='BMI vs Age')
-            st.plotly_chart(fig)
+            x_feature = st.selectbox("Select X-axis feature:", data.columns, index=data.columns.get_loc('age'))
         with col2:
-            fig = px.scatter(data, x='ap_hi', y='ap_lo', color='cardio',
-                           title='Blood Pressure Analysis')
-            st.plotly_chart(fig)
+            y_feature = st.selectbox("Select Y-axis feature:", data.columns, index=data.columns.get_loc('bmi'))
         
-        # Additional feature relationships
-        st.subheader("Feature Relationships")
-        feature_x = st.selectbox("Select X-axis feature:", data.columns)
-        feature_y = st.selectbox("Select Y-axis feature:", data.columns)
-        fig = px.scatter(data, x=feature_x, y=feature_y, color='cardio',
-                        title=f'{feature_x} vs {feature_y}')
+        fig = px.scatter(data, x=x_feature, y=y_feature, 
+                        color='cardio',
+                        color_discrete_map={0: 'blue', 1: 'red'},
+                        title=f'Relationship between {x_feature} and {y_feature}',
+                        labels={'cardio': 'Heart Disease'})
         st.plotly_chart(fig)
+        
+        # Correlation analysis
+        st.subheader("Feature Correlations")
+        corr_matrix = data.corr()
+        fig = plt.figure(figsize=(12, 8))
+        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0)
+        plt.title("Feature Correlation Matrix")
+        st.pyplot(fig)
 
     else:  # Survival Analysis
         st.header("⏳ Survival Analysis")
         
         st.info("""
-        This analysis shows the probability of survival (not having heart disease) 
-        over time, stratified by different risk factors.
+        This analysis examines the relationship between various risk factors and the 
+        probability of heart disease over time. The survival probability represents 
+        the likelihood of not developing heart disease at different ages.
         """)
         
-        tab1, tab2 = st.tabs(["Kaplan-Meier Analysis", "Cox Proportional Hazards"])
+        tab1, tab2 = st.tabs(["Survival Curves", "Risk Factor Analysis"])
         
         with tab1:
             group_col = st.selectbox(
@@ -388,21 +427,62 @@ def main():
             )
             
             if st.button("Generate Survival Curves"):
-                with st.spinner("Calculating survival curves..."):
+                with st.spinner("Calculating survival probabilities..."):
                     fig = st.session_state.survival_analyzer.analyze(
                         data,
                         None if group_col == 'None' else group_col
                     )
                     st.pyplot(fig)
+                    
+                    if group_col != 'None':
+                        st.subheader(f"Risk Analysis for {group_col}")
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Distribution of risk factor
+                            counts = data[group_col].value_counts().sort_index()
+                            fig = px.bar(
+                                x=counts.index,
+                                y=counts.values,
+                                title=f"Distribution of {group_col}",
+                                labels={'x': group_col, 'y': 'Count'}
+                            )
+                            st.plotly_chart(fig)
+                        
+                        with col2:
+                            # Disease prevalence by group
+                            prev = data.groupby(group_col)['cardio'].mean() * 100
+                            fig = px.bar(
+                                x=prev.index,
+                                y=prev.values,
+                                title=f"Disease Prevalence by {group_col}",
+                                labels={'x': group_col, 'y': 'Prevalence (%)'}
+                            )
+                            st.plotly_chart(fig)
         
         with tab2:
-            if st.button("Run Cox Analysis"):
-                with st.spinner("Running Cox Proportional Hazards analysis..."):
-                    summary, fig = st.session_state.survival_analyzer.run_cox_analysis(data)
-                    st.text("Cox Proportional Hazards Model Results:")
-                    st.text(summary)
-                    st.pyplot(fig)
+            if st.button("Analyze Risk Factors"):
+                with st.spinner("Analyzing risk factors..."):
+                    risk_scores = st.session_state.survival_analyzer.analyze_risk_factors(data)
+                    
+                    fig = px.bar(
+                        x=risk_scores.index,
+                        y=risk_scores.values,
+                        title="Risk Factor Impact Analysis",
+                        labels={'x': 'Risk Factor', 'y': 'Risk Ratio'},
+                        color=risk_scores.values,
+                        color_continuous_scale='Reds'
+                    )
+                    st.plotly_chart(fig)
+                    
+                    st.write("""
+                    ### Interpretation:
+                    - Risk Ratio > 1: Increased risk of heart disease
+                    - Risk Ratio = 1: No effect
+                    - Risk Ratio < 1: Decreased risk of heart disease
+                    """)
 
+    # Footer
     st.markdown("---")
     st.caption("Heart Disease Analysis Dashboard | Version 2.0")
 
