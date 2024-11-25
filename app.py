@@ -12,7 +12,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import survival_analysis
 
 # Configure Streamlit page
 st.set_page_config(
@@ -42,6 +41,21 @@ st.markdown("""
         font-weight: bold;
     }
     div.stButton > button:hover { background-color: #45a049; }
+    .gif-container {
+        display: flex;
+        justify-content: center;
+        margin: 20px 0;
+    }
+    .gif-container img {
+        width: 100%;
+        max-width: 800px;
+        border-radius: 10px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease;
+    }
+    .gif-container img:hover {
+        transform: scale(1.02);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -125,34 +139,65 @@ class ModelAnalyzer:
                                         self.model.feature_importances_))
         }
 
-class SurvivalAnalyzer:
+  class SurvivalAnalyzer:
+    def __init__(self):
+        self.kmf = KaplanMeierFitter()
+        self.cph = CoxPHFitter()
+
     @st.cache_data
     def analyze(self, data, group_col=None):
-        """Run survival analysis using Kaplan-Meier estimate"""
+        """Run survival analysis with caching"""
+        # Prepare survival data
+        survival_data = data.copy()
+        survival_data['duration'] = survival_data['age']
+        survival_data['event'] = survival_data['cardio']
+        
         fig = plt.figure(figsize=(10, 6))
         
         if group_col:
             for value in sorted(data[group_col].unique()):
                 mask = data[group_col] == value
-                group_data = data[mask]
-                
-                # Calculate survival curve
-                time_points = np.sort(group_data['age'].unique())
-                survival_prob = 1 - group_data.groupby('age')['cardio'].mean().cumsum() / len(time_points)
-                
-                plt.plot(time_points, survival_prob, 
-                        label=f'{group_col}={value}')
+                self.kmf.fit(
+                    durations=survival_data[mask]['duration'],
+                    events=survival_data[mask]['event'],
+                    label=f'{group_col}={value}'
+                )
+                self.kmf.plot()
         else:
-            time_points = np.sort(data['age'].unique())
-            survival_prob = 1 - data.groupby('age')['cardio'].mean().cumsum() / len(time_points)
-            plt.plot(time_points, survival_prob, label='Overall')
+            self.kmf.fit(
+                durations=survival_data['duration'],
+                events=survival_data['event'],
+                label='Overall'
+            )
+            self.kmf.plot()
             
-        plt.title('Survival Analysis')
+        plt.title('Kaplan-Meier Survival Analysis')
         plt.xlabel('Age (years)')
         plt.ylabel('Survival probability')
-        plt.legend()
         plt.grid(True)
         return fig
+
+    @st.cache_data
+    def run_cox_analysis(self, data):
+        """Run Cox Proportional Hazards analysis with caching"""
+        survival_data = data.copy()
+        survival_data['duration'] = survival_data['age']
+        survival_data['event'] = survival_data['cardio']
+        
+        features = ['gender', 'bmi', 'cholesterol', 'gluc', 'smoke', 
+                   'alco', 'active', 'pulse_pressure']
+        
+        analysis_data = survival_data[features + ['duration', 'event']]
+        
+        self.cph.fit(analysis_data, 'duration', 'event')
+        summary = self.cph.print_summary()
+        
+        # Create partial effects plot
+        fig = plt.figure(figsize=(10, 6))
+        self.cph.plot_partial_effects('bmi', values=[20, 25, 30, 35])
+        plt.title('Partial Effects of BMI on Survival')
+        
+        return summary, fig
 
 @st.cache_data
 def plot_confusion_matrix(y_true, y_pred):
@@ -187,28 +232,7 @@ def plot_roc_curve(y_true, y_prob):
     return fig
 
 def main():
-    # Add custom CSS for GIF container
-    st.markdown("""
-        <style>
-        .gif-container {
-            display: flex;
-            justify-content: center;
-            margin: 20px 0;
-        }
-        .gif-container img {
-            width: 100%;
-            max-width: 800px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease;
-        }
-        .gif-container img:hover {
-            transform: scale(1.02);
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Add GIF with enhanced styling
+    # Add GIF at the top
     st.markdown("""
         <div class="gif-container">
             <img src="https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/Transformer%20ExplainableAI.gif" 
@@ -251,6 +275,7 @@ def main():
         col2.metric("Features", len(data.columns) - 1)
         col3.metric("Disease Prevalence", f"{(data['cardio'].mean() * 100):.1f}%")
         
+        st.subheader("Sample Data")
         st.dataframe(data.head())
         
         st.subheader("Feature Distributions")
@@ -258,6 +283,11 @@ def main():
         fig = px.histogram(data, x=feature, color='cardio',
                          title=f"Distribution of {feature}")
         st.plotly_chart(fig)
+
+        # Statistical Summary
+        if st.checkbox("Show Statistical Summary"):
+            st.subheader("Statistical Summary")
+            st.dataframe(data.describe())
 
     elif analysis_type == "Model Performance":
         st.header("📊 Model Performance")
@@ -279,13 +309,20 @@ def main():
             
             progress.progress(100)
             
+            # Display results
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
+            col2.metric("CV Mean", f"{metrics['cv_scores'].mean():.2%}")
+            col3.metric("CV Std", f"{metrics['cv_scores'].std():.2%}")
+            
             col1, col2 = st.columns(2)
             with col1:
                 st.plotly_chart(plot_roc_curve(y_test, metrics['probabilities']))
             with col2:
                 st.pyplot(plot_confusion_matrix(y_test, metrics['predictions']))
             
-            st.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
+            st.subheader("Classification Report")
+            st.dataframe(pd.DataFrame(metrics['report']).transpose())
 
     elif analysis_type == "SHAP Analysis":
         st.header("🎯 SHAP Analysis")
@@ -296,12 +333,25 @@ def main():
                 model = st.session_state.model_analyzer.train_model(X_train, y_train, n_estimators, max_depth)
                 shap_values = st.session_state.model_analyzer.compute_shap_values()
                 
+                st.subheader("SHAP Summary Plot")
                 fig = plt.figure(figsize=(10, 8))
                 shap.summary_plot(shap_values[1], st.session_state.model_analyzer.X_train, show=False)
                 st.pyplot(fig)
+                
+                if st.checkbox("Show Feature Dependence Plots"):
+                    feature = st.selectbox("Select feature:", 
+                                         st.session_state.model_analyzer.feature_names)
+                    fig = plt.figure(figsize=(10, 6))
+                    shap.dependence_plot(feature, shap_values[1], 
+                                       st.session_state.model_analyzer.X_train)
+                    st.pyplot(fig)
 
     elif analysis_type == "Feature Engineering":
         st.header("🔧 Feature Engineering")
+        
+        st.write("### Engineered Features:")
+        st.write("- BMI (Body Mass Index)")
+        st.write("- Pulse Pressure (Systolic - Diastolic)")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -312,22 +362,46 @@ def main():
             fig = px.scatter(data, x='ap_hi', y='ap_lo', color='cardio',
                            title='Blood Pressure Analysis')
             st.plotly_chart(fig)
+        
+        # Additional feature relationships
+        st.subheader("Feature Relationships")
+        feature_x = st.selectbox("Select X-axis feature:", data.columns)
+        feature_y = st.selectbox("Select Y-axis feature:", data.columns)
+        fig = px.scatter(data, x=feature_x, y=feature_y, color='cardio',
+                        title=f'{feature_x} vs {feature_y}')
+        st.plotly_chart(fig)
 
     else:  # Survival Analysis
         st.header("⏳ Survival Analysis")
         
-        group_col = st.selectbox(
-            "Select grouping variable:", 
-            ['None', 'cholesterol', 'gluc', 'smoke', 'alco', 'active']
-        )
+        st.info("""
+        This analysis shows the probability of survival (not having heart disease) 
+        over time, stratified by different risk factors.
+        """)
         
-        if st.button("Generate Survival Curves"):
-            with st.spinner("Calculating survival curves..."):
-                fig = st.session_state.survival_analyzer.analyze(
-                    data,
-                    None if group_col == 'None' else group_col
-                )
-                st.pyplot(fig)
+        tab1, tab2 = st.tabs(["Kaplan-Meier Analysis", "Cox Proportional Hazards"])
+        
+        with tab1:
+            group_col = st.selectbox(
+                "Select grouping variable:", 
+                ['None', 'cholesterol', 'gluc', 'smoke', 'alco', 'active']
+            )
+            
+            if st.button("Generate Survival Curves"):
+                with st.spinner("Calculating survival curves..."):
+                    fig = st.session_state.survival_analyzer.analyze(
+                        data,
+                        None if group_col == 'None' else group_col
+                    )
+                    st.pyplot(fig)
+        
+        with tab2:
+            if st.button("Run Cox Analysis"):
+                with st.spinner("Running Cox Proportional Hazards analysis..."):
+                    summary, fig = st.session_state.survival_analyzer.run_cox_analysis(data)
+                    st.text("Cox Proportional Hazards Model Results:")
+                    st.text(summary)
+                    st.pyplot(fig)
 
     st.markdown("---")
     st.caption("Heart Disease Analysis Dashboard | Version 2.0")
