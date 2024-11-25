@@ -7,3 +7,4 @@ matplotlib==3.8.2
 seaborn==0.13.1
 shap==0.44.0
 scipy>=1.11.3
+lifelines==0.26.4
