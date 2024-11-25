@@ -96,38 +96,55 @@ class ModelAnalyzer:
         self.X_train = None
         self.explainer = None
         self.shap_values = None
-        
-    @st.cache_data
+
     def prepare_data(self, data):
-        """Prepare data for modeling with caching"""
+        """Prepare data for modeling"""
         features = ['age', 'gender', 'height', 'weight', 'ap_hi', 'ap_lo',
                    'cholesterol', 'gluc', 'smoke', 'alco', 'active',
                    'bmi', 'pulse_pressure', 'map']
         
-        X = data[features]
-        y = data['cardio']
+        X = data[features].copy()  # Create a copy to avoid modifying original
+        y = data['cardio'].copy()
         self.feature_names = features
         X_scaled = self.scaler.fit_transform(X)
         self.X_train = pd.DataFrame(X_scaled, columns=self.feature_names)
         return train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
     @st.cache_data
-    def train_model(self, X_train, y_train, n_estimators, max_depth):
-        """Train model with caching"""
-        self.model = RandomForestClassifier(
+    def compute_metrics(_self, X_train, X_test, y_train, y_test, n_estimators, max_depth):
+        """Train model and compute metrics with caching"""
+        # Create and train model
+        model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
             random_state=42,
             n_jobs=-1
         )
-        self.model.fit(X_train, y_train)
-        return self.model
+        model.fit(X_train, y_train)
+        
+        # Generate predictions
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
+        
+        # Calculate metrics
+        metrics = {
+            'accuracy': float(accuracy_score(y_test, y_pred)),  # Convert to float for caching
+            'predictions': y_pred.tolist(),  # Convert to list for caching
+            'probabilities': y_prob.tolist(),
+            'cv_scores': cross_val_score(model, X_test, y_test, cv=5).tolist(),
+            'report': classification_report(y_test, y_pred, output_dict=True),
+            'feature_importance': dict(zip(_self.feature_names, 
+                                         model.feature_importances_.tolist()))
+        }
+        
+        return model, metrics
 
     @st.cache_data
-    def compute_shap_values(self):
+    def compute_shap_values(_self, model, X_train):
         """Compute SHAP values with caching"""
-        self.explainer = shap.TreeExplainer(self.model)
-        return self.explainer.shap_values(self.X_train)
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_train)
+        return shap_values
 
     @st.cache_data
     def generate_metrics(self, X_test, y_test):
@@ -316,21 +333,25 @@ def main():
             progress.progress(25)
             X_train, X_test, y_train, y_test = st.session_state.model_analyzer.prepare_data(data)
             
-            # Train model
+            # Train model and compute metrics
             progress.progress(50)
-            model = st.session_state.model_analyzer.train_model(X_train, y_train, n_estimators, max_depth)
+            model, metrics = st.session_state.model_analyzer.compute_metrics(
+                X_train, X_test, y_train, y_test, n_estimators, max_depth
+            )
             
-            # Generate metrics
             progress.progress(75)
-            metrics = st.session_state.model_analyzer.generate_metrics(X_test, y_test)
+            
+            # Store model in session state for SHAP analysis
+            st.session_state['current_model'] = model
+            st.session_state['current_X_train'] = X_train
             
             progress.progress(100)
             
             # Display results
             col1, col2, col3 = st.columns(3)
             col1.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
-            col2.metric("CV Mean", f"{metrics['cv_scores'].mean():.2%}")
-            col3.metric("CV Std", f"{metrics['cv_scores'].std():.2%}")
+            col2.metric("CV Mean", f"{np.mean(metrics['cv_scores']):.2%}")
+            col3.metric("CV Std", f"{np.std(metrics['cv_scores']):.2%}")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -338,11 +359,12 @@ def main():
             with col2:
                 st.pyplot(plot_confusion_matrix(y_test, metrics['predictions']))
             
-            st.subheader("Classification Report")
-            report_df = pd.DataFrame(metrics['report']).transpose()
-            st.dataframe(report_df)
-
-            # Feature importance (continued)
+            # Feature importance
+            importance_df = pd.DataFrame({
+                'Feature': st.session_state.model_analyzer.feature_names,
+                'Importance': list(metrics['feature_importance'].values())
+            }).sort_values('Importance', ascending=False)
+            
             fig = px.bar(importance_df, x='Feature', y='Importance',
                         title='Feature Importance',
                         color='Importance',
@@ -353,27 +375,21 @@ def main():
         st.header("🎯 SHAP Analysis")
         
         if st.button("Generate SHAP Analysis"):
+            if 'current_model' not in st.session_state:
+                st.warning("Please run the Model Performance analysis first!")
+                return
+                
             with st.spinner("Computing SHAP values..."):
-                X_train, X_test, y_train, y_test = st.session_state.model_analyzer.prepare_data(data)
-                model = st.session_state.model_analyzer.train_model(X_train, y_train, n_estimators, max_depth)
-                shap_values = st.session_state.model_analyzer.compute_shap_values()
+                shap_values = st.session_state.model_analyzer.compute_shap_values(
+                    st.session_state['current_model'],
+                    st.session_state['current_X_train']
+                )
                 
                 st.subheader("SHAP Summary Plot")
                 fig = plt.figure(figsize=(10, 8))
-                shap.summary_plot(shap_values[1], st.session_state.model_analyzer.X_train, show=False)
-                st.pyplot(fig)
-                
-                st.subheader("Feature Dependence Analysis")
-                feature = st.selectbox("Select feature for detailed analysis:", 
-                                     st.session_state.model_analyzer.feature_names)
-                
-                fig = plt.figure(figsize=(10, 6))
-                shap.dependence_plot(
-                    feature, 
-                    shap_values[1], 
-                    st.session_state.model_analyzer.X_train,
-                    show=False
-                )
+                shap.summary_plot(shap_values[1], 
+                                st.session_state.model_analyzer.X_train, 
+                                show=False)
                 st.pyplot(fig)
 
     elif analysis_type == "Feature Engineering":
