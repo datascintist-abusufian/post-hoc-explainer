@@ -200,6 +200,15 @@ class HeartDiseaseAnalyzer:
         return fig
 
 def main():
+    # Add GIF at the top
+    st.markdown("""
+        <div style="display: flex; justify-content: center;">
+            <img src="https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/Transformer%20ExplainableAI.gif" 
+                 alt="Explainable AI Visualization"
+                 style="width: 100%; max-width: 800px; margin-bottom: 20px;">
+        </div>
+    """, unsafe_allow_html=True)
+
     st.title("🫀 Advanced Heart Disease Analysis Dashboard")
     
     # Sidebar
