@@ -227,10 +227,9 @@ def main():
         st.markdown("""
         ### About
         Post hoc explanation dashboard provides interactive insights into heart disease prediction using:
-        advanced indepth scientific analysis for trust worthy and transparent to the clinicial.
-        It helps to clinical expert to take a decision on the basis What input influenced on prediction!!
+        advanced indepth scientific analysis for trust worthy and transparent to the clinician.
+        It helps to clinical expert to take a decision on the basis what input has been influenced on prediction!!
         """)
-
     # Load data
     data = DataLoader.load_data()
     if data is None:
