@@ -12,6 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.metrics import survival_analysis
 
 # Configure Streamlit page
 st.set_page_config(
@@ -127,27 +128,30 @@ class ModelAnalyzer:
 class SurvivalAnalyzer:
     @st.cache_data
     def analyze(self, data, group_col=None):
-        """Run survival analysis with caching"""
-        kmf = KaplanMeierFitter()
+        """Run survival analysis using Kaplan-Meier estimate"""
+        fig = plt.figure(figsize=(10, 6))
         
         if group_col:
-            fig = plt.figure(figsize=(10, 6))
             for value in sorted(data[group_col].unique()):
                 mask = data[group_col] == value
-                kmf.fit(
-                    data[mask]['age'],
-                    data[mask]['cardio'],
-                    label=f'{group_col}={value}'
-                )
-                kmf.plot()
+                group_data = data[mask]
+                
+                # Calculate survival curve
+                time_points = np.sort(group_data['age'].unique())
+                survival_prob = 1 - group_data.groupby('age')['cardio'].mean().cumsum() / len(time_points)
+                
+                plt.plot(time_points, survival_prob, 
+                        label=f'{group_col}={value}')
         else:
-            fig = plt.figure(figsize=(10, 6))
-            kmf.fit(data['age'], data['cardio'], label='Overall')
-            kmf.plot()
+            time_points = np.sort(data['age'].unique())
+            survival_prob = 1 - data.groupby('age')['cardio'].mean().cumsum() / len(time_points)
+            plt.plot(time_points, survival_prob, label='Overall')
             
-        plt.title('Kaplan-Meier Survival Curve')
+        plt.title('Survival Analysis')
         plt.xlabel('Age (years)')
         plt.ylabel('Survival probability')
+        plt.legend()
+        plt.grid(True)
         return fig
 
 @st.cache_data
