@@ -25,6 +25,7 @@ class DataLoader:
                 'cholesterol': 'int8', 'gluc': 'int8', 'smoke': 'int8',
                 'alco': 'int8', 'active': 'int8', 'cardio': 'int8'
             }
+            # Update path to use data from your repository
             data = pd.read_csv('data/cardio_train.csv', sep=';', dtype=dtypes)
             return data
             
