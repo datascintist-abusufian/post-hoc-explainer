@@ -138,8 +138,8 @@ class ModelAnalyzer:
             'feature_importance': dict(zip(self.feature_names, 
                                         self.model.feature_importances_))
         }
-
-  class SurvivalAnalyzer:
+      
+class SurvivalAnalyzer:
     def __init__(self):
         self.kmf = KaplanMeierFitter()
         self.cph = CoxPHFitter()
