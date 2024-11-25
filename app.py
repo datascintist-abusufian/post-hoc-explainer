@@ -209,7 +209,7 @@ def main():
         </div>
     """, unsafe_allow_html=True)
 
-    st.title("🫀 Advanced Heart Disease Analysis Dashboard")
+    st.title("🫀 Heart Disease Predtiction by Explainable-AI Dashboard")
     
     # Sidebar
     with st.sidebar:
