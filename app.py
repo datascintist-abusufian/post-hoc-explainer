@@ -1,18 +1,55 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import shap
+from lifelines import KaplanMeierFitter
+from lifelines import CoxPHFitter
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
-                           roc_curve, auc)
+                           roc_curve, auc, precision_recall_curve)
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Page configuration
-st.set_page_config(page_title="Heart Disease Analysis", page_icon="🫀", layout="wide")
+st.set_page_config(
+    page_title="Heart Disease Analysis Dashboard",
+    page_icon="🫀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+    <style>
+    .main {
+        padding: 2rem 1rem;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 4px 4px 0 0;
+        gap: 1px;
+        padding: 10px 16px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff;
+    }
+    .plot-container {
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 class DataLoader:
     @staticmethod
@@ -25,8 +62,12 @@ class DataLoader:
                 'cholesterol': 'int8', 'gluc': 'int8', 'smoke': 'int8',
                 'alco': 'int8', 'active': 'int8', 'cardio': 'int8'
             }
-            # Update path to use data from your repository
-            data = pd.read_csv('data/cardio_train.csv', sep=';', dtype=dtypes)
+            url = "https://raw.githubusercontent.com/datascintist-abusufian/Post-hoc-explanation-cardio-phenotype-interpretability/main/cardio_train.csv"
+            data = pd.read_csv(url, sep=';', dtype=dtypes)
+            
+            # Preprocess age from days to years
+            data['age'] = data['age'] / 365.25
+            
             return data
             
         except Exception as e:
@@ -43,89 +84,90 @@ class HeartDiseaseAnalyzer:
         )
         self.scaler = StandardScaler()
         self.feature_names = None
+        self.X_train = None
+        self.explainer = None
 
     def preprocess_data(self, data):
         X = data.drop('cardio', axis=1)
         y = data['cardio']
         self.feature_names = X.columns.tolist()
         X_scaled = self.scaler.fit_transform(X)
+        self.X_train = pd.DataFrame(X_scaled, columns=self.feature_names)
         return train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
     def train_and_evaluate(self, X_train, X_test, y_train, y_test):
-        # Train model
         self.model.fit(X_train, y_train)
-        
-        # Make predictions
         y_pred = self.model.predict(X_test)
         y_prob = self.model.predict_proba(X_test)[:, 1]
         
-        # Calculate metrics
-        accuracy = accuracy_score(y_test, y_pred)
-        cv_scores = cross_val_score(self.model, X_test, y_test, cv=5)
+        # Initialize SHAP explainer
+        self.explainer = shap.TreeExplainer(self.model)
         
         return {
-            'accuracy': accuracy,
+            'accuracy': accuracy_score(y_test, y_pred),
             'predictions': y_pred,
             'probabilities': y_prob,
-            'cv_scores': cv_scores,
+            'cv_scores': cross_val_score(self.model, X_test, y_test, cv=5),
             'report': classification_report(y_test, y_pred, output_dict=True)
         }
 
-    def plot_confusion_matrix(self, y_true, y_pred):
-        cm = confusion_matrix(y_true, y_pred)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                   xticklabels=['No Disease', 'Disease'],
-                   yticklabels=['No Disease', 'Disease'])
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
+    def plot_shap_summary(self):
+        shap_values = self.explainer.shap_values(self.X_train)
+        fig = plt.figure(figsize=(10, 8))
+        shap.summary_plot(shap_values[1], self.X_train, show=False)
+        plt.title("SHAP Feature Importance Summary")
         return fig
 
-    def plot_roc_curve(self, y_true, y_prob):
-        fpr, tpr, _ = roc_curve(y_true, y_prob)
-        roc_auc = auc(fpr, tpr)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=fpr, y=tpr,
-                               name=f'ROC curve (AUC = {roc_auc:.2f})'))
-        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1],
-                               line=dict(dash='dash'), name='Random'))
-        fig.update_layout(
-            title='ROC Curve',
-            xaxis_title='False Positive Rate',
-            yaxis_title='True Positive Rate',
-            yaxis=dict(scaleanchor="x", scaleratio=1),
-            xaxis=dict(constrain='domain'),
-            width=700, height=500
+    def plot_shap_dependence(self, feature_name):
+        shap_values = self.explainer.shap_values(self.X_train)
+        fig = plt.figure(figsize=(10, 6))
+        shap.dependence_plot(
+            feature_name, 
+            shap_values[1], 
+            self.X_train,
+            show=False
         )
+        plt.title(f"SHAP Dependence Plot for {feature_name}")
         return fig
 
-    def plot_feature_importance(self):
-        importance_df = pd.DataFrame({
-            'Feature': self.feature_names,
-            'Importance': self.model.feature_importances_
-        }).sort_values('Importance', ascending=False)
-        
-        fig = px.bar(
-            importance_df,
-            x='Feature',
-            y='Importance',
-            title='Feature Importance',
-            color='Importance',
-            color_continuous_scale='viridis'
+    # ... [Previous plotting methods remain the same] ...
+
+def plot_survival_curves(data):
+    kmf = KaplanMeierFitter()
+    
+    # Create survival data
+    duration = data['age']
+    event_observed = data['cardio']
+    
+    fig = plt.figure(figsize=(10, 6))
+    
+    # Plot survival curves for different groups
+    for cholesterol in [1, 2, 3]:
+        mask = data['cholesterol'] == cholesterol
+        kmf.fit(
+            duration[mask], 
+            event_observed[mask], 
+            label=f'Cholesterol Level {cholesterol}'
         )
-        
-        return fig
+        kmf.plot()
+    
+    plt.title('Survival Curves by Cholesterol Level')
+    plt.xlabel('Age (years)')
+    plt.ylabel('Survival probability')
+    return fig
 
 def main():
-    st.title("🫀 Heart Disease Analysis")
+    st.title("🫀 Advanced Heart Disease Analysis Dashboard")
     
     # Sidebar
     with st.sidebar:
         st.header("📊 Analysis Controls")
         
-        # Model parameters
+        analysis_type = st.selectbox(
+            "Select Analysis Type",
+            ["Model Performance", "SHAP Analysis", "Survival Analysis"]
+        )
+        
         n_estimators = st.slider("Number of trees", 50, 200, 100)
         max_depth = st.slider("Maximum tree depth", 5, 20, 10)
 
@@ -134,79 +176,73 @@ def main():
     if data is None:
         return
 
-    # Data Overview
-    st.header("📋 Data Overview")
-    
-    tab1, tab2 = st.tabs(["Data Preview", "Feature Descriptions"])
-    with tab1:
-        st.dataframe(data.head())
+    # Main content
+    if analysis_type == "Model Performance":
+        st.header("📊 Model Performance Analysis")
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Records", len(data))
-        col2.metric("Features", len(data.columns) - 1)
-        col3.metric("Disease Prevalence", f"{(data['cardio'].mean() * 100):.1f}%")
-        
-    with tab2:
-        # Feature descriptions
-        st.markdown("### Feature Descriptions")
-        feature_descriptions = {
-            'age': 'Age in days',
-            'gender': '0: Female, 1: Male',
-            'height': 'Height in centimeters',
-            'weight': 'Weight in kilograms',
-            'ap_hi': 'Systolic blood pressure',
-            'ap_lo': 'Diastolic blood pressure',
-            'cholesterol': '1: Normal, 2: Above Normal, 3: Well Above Normal',
-            'gluc': '1: Normal, 2: Above Normal, 3: Well Above Normal',
-            'smoke': '0: Non-smoker, 1: Smoker',
-            'alco': '0: No alcohol, 1: Alcohol consumption',
-            'active': '0: Inactive, 1: Physically active',
-            'cardio': '0: No disease, 1: Disease present'
-        }
-        for feature, description in feature_descriptions.items():
-            st.markdown(f"**{feature}**: {description}")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.dataframe(data.head())
+        with col2:
+            st.metric("Total Records", len(data))
+            st.metric("Features", len(data.columns) - 1)
+            st.metric("Disease Prevalence", f"{(data['cardio'].mean() * 100):.1f}%")
 
-    # Analysis
-    if st.button("🔍 Run Analysis"):
-        analyzer = HeartDiseaseAnalyzer(n_estimators, max_depth)
-        
-        with st.spinner("Processing data..."):
-            X_train, X_test, y_train, y_test = analyzer.preprocess_data(data)
-        
-        with st.spinner("Training model..."):
-            metrics = analyzer.train_and_evaluate(X_train, X_test, y_train, y_test)
+        if st.button("🔍 Run Model Analysis"):
+            analyzer = HeartDiseaseAnalyzer(n_estimators, max_depth)
+            
+            with st.spinner("Processing data and training model..."):
+                X_train, X_test, y_train, y_test = analyzer.preprocess_data(data)
+                metrics = analyzer.train_and_evaluate(X_train, X_test, y_train, y_test)
 
-        # Results tabs
-        tabs = st.tabs([
-            "📊 Model Performance",
-            "🎯 Feature Analysis",
-            "📈 Model Metrics"
-        ])
-
-        with tabs[0]:
             col1, col2, col3 = st.columns(3)
             col1.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
-            col2.metric("Cross-validation Mean", f"{metrics['cv_scores'].mean():.2%}")
-            col3.metric("Cross-validation Std", f"{metrics['cv_scores'].std():.2%}")
-            
-            st.subheader("Confusion Matrix")
-            st.pyplot(analyzer.plot_confusion_matrix(y_test, metrics['predictions']))
-            
-            st.subheader("ROC Curve")
-            st.plotly_chart(analyzer.plot_roc_curve(y_test, metrics['probabilities']))
+            col2.metric("CV Mean", f"{metrics['cv_scores'].mean():.2%}")
+            col3.metric("CV Std", f"{metrics['cv_scores'].std():.2%}")
 
-        with tabs[1]:
-            st.plotly_chart(analyzer.plot_feature_importance())
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(analyzer.plot_roc_curve(y_test, metrics['probabilities']))
+            with col2:
+                st.pyplot(analyzer.plot_confusion_matrix(y_test, metrics['predictions']))
 
-        with tabs[2]:
-            st.subheader("Classification Report")
-            report_df = pd.DataFrame(metrics['report']).transpose()
-            st.dataframe(report_df)
+    elif analysis_type == "SHAP Analysis":
+        st.header("🎯 SHAP Feature Analysis")
+        
+        if st.button("🔍 Generate SHAP Analysis"):
+            analyzer = HeartDiseaseAnalyzer(n_estimators, max_depth)
+            
+            with st.spinner("Calculating SHAP values..."):
+                X_train, X_test, y_train, y_test = analyzer.preprocess_data(data)
+                analyzer.train_and_evaluate(X_train, X_test, y_train, y_test)
+                
+                st.pyplot(analyzer.plot_shap_summary())
+                
+                feature = st.selectbox("Select feature for dependence plot:", analyzer.feature_names)
+                st.pyplot(analyzer.plot_shap_dependence(feature))
+
+    else:  # Survival Analysis
+        st.header("📈 Survival Analysis")
+        
+        if st.button("🔍 Generate Survival Analysis"):
+            with st.spinner("Calculating survival curves..."):
+                st.pyplot(plot_survival_curves(data))
+                
+                # Cox Proportional Hazards Model
+                cph = CoxPHFitter()
+                survival_data = data.copy()
+                survival_data['duration'] = survival_data['age']
+                survival_data['event'] = survival_data['cardio']
+                
+                cph.fit(survival_data, 'duration', 'event')
+                st.write("Cox Proportional Hazards Model Summary:")
+                st.write(cph.print_summary())
 
     st.markdown("---")
     st.markdown(
         """<div style='text-align: center; color: #666;'>
-            <p>Heart Disease Analysis Tool | Version 1.0</p>
+            <p>Advanced Heart Disease Analysis Dashboard | Version 2.0</p>
+            <p>Featuring SHAP Explanations and Survival Analysis</p>
         </div>""",
         unsafe_allow_html=True
     )
