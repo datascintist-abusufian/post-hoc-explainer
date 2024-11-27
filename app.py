@@ -6,7 +6,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
-                           roc_curve, auc, precision_recall_curve)
+                           roc_curve, auc)
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
@@ -50,10 +50,6 @@ st.markdown("""
         max-width: 800px;
         border-radius: 10px;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        transition: transform 0.3s ease;
-    }
-    .gif-container img:hover {
-        transform: scale(1.02);
     }
     .metric-card {
         background-color: #f8f9fa;
@@ -64,107 +60,39 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
-def load_data():
-    """Load and preprocess data with caching"""
-    try:
-        dtypes = {
-            'age': 'int32', 'gender': 'int8', 'height': 'int32',
-            'weight': 'float32', 'ap_hi': 'int32', 'ap_lo': 'int32',
-            'cholesterol': 'int8', 'gluc': 'int8', 'smoke': 'int8',
-            'alco': 'int8', 'active': 'int8', 'cardio': 'int8'
-        }
-        url = "https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/data/cardio_train.csv"
-        data = pd.read_csv(url, sep=';', dtype=dtypes)
-        
-        # Preprocess data
-        data['age'] = data['age'] / 365.25
-        data['bmi'] = data['weight'] / ((data['height']/100) ** 2)
-        data['pulse_pressure'] = data['ap_hi'] - data['ap_lo']
-        data['map'] = data['ap_lo'] + (data['pulse_pressure'] / 3)  # Mean Arterial Pressure
-        
-        return data
-    except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
-        return None
-
-
-# Remove the cached decorator from compute_shap_values function
-def compute_shap_values(X_train, model):
-    """Compute SHAP values without caching"""
-    try:
-        # Create explainer
-        explainer = shap.TreeExplainer(model)
-        
-        # Compute SHAP values
-        X_train_array = X_train.values if isinstance(X_train, pd.DataFrame) else X_train
-        shap_values = explainer.shap_values(X_train_array)
-        
-        # Store explainer in session state for force plots
-        st.session_state['explainer'] = explainer
-        
-        return shap_values, X_train.columns if isinstance(X_train, pd.DataFrame) else None
-    except Exception as e:
-        st.error(f"Error computing SHAP values: {str(e)}")
-        return None, None
+class DataLoader:
+    @staticmethod
+    @st.cache_data
+    def load_data():
+        """Load and preprocess data with caching"""
+        try:
+            dtypes = {
+                'age': 'int32', 'gender': 'int8', 'height': 'int32',
+                'weight': 'float32', 'ap_hi': 'int32', 'ap_lo': 'int32',
+                'cholesterol': 'int8', 'gluc': 'int8', 'smoke': 'int8',
+                'alco': 'int8', 'active': 'int8', 'cardio': 'int8'
+            }
+            url = "https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/data/cardio_train.csv"
+            data = pd.read_csv(url, sep=';', dtype=dtypes)
+            
+            # Preprocess data
+            data['age'] = data['age'] / 365.25
+            data['bmi'] = data['weight'] / ((data['height']/100) ** 2)
+            data['pulse_pressure'] = data['ap_hi'] - data['ap_lo']
+            data['map'] = data['ap_lo'] + (data['pulse_pressure'] / 3)
+            
+            return data
+        except Exception as e:
+            st.error(f"Error loading data: {str(e)}")
+            return None
 
 class ModelAnalyzer:
-    def compute_shap_values(self, model, X_train):
-        """Direct computation of SHAP values without caching"""
-        return compute_shap_values(X_train, model)
+    def __init__(self):
+        self.model = None
+        self.scaler = StandardScaler()
+        self.feature_names = None
+        self.X_train = None
 
-# Modified SHAP Analysis section in main():
-elif analysis_type == "SHAP Analysis":
-    st.header("🎯 SHAP Analysis")
-    
-    if st.button("Generate SHAP Analysis"):
-        if 'current_model' not in st.session_state:
-            st.warning("Please run the Model Performance analysis first!")
-            return
-            
-        with st.spinner("Computing SHAP values..."):
-            shap_values, feature_names = compute_shap_values(
-                st.session_state.model_analyzer.X_train,
-                st.session_state['current_model']
-            )
-            
-            if shap_values is not None:
-                # Store values in session state for reuse
-                st.session_state['shap_values'] = shap_values
-                
-                # Summary plot
-                st.subheader("SHAP Summary Plot")
-                fig, ax = plt.subplots(figsize=(10, 8))
-                shap.summary_plot(
-                    shap_values[1],
-                    st.session_state.model_analyzer.X_train,
-                    feature_names=feature_names,
-                    show=False
-                )
-                st.pyplot(fig)
-                plt.close()
-
-                # Individual prediction explanation
-                if st.checkbox("Show Individual Prediction Explanations"):
-                    st.subheader("Individual Prediction Explanation")
-                    sample_idx = st.slider(
-                        "Select sample index",
-                        0,
-                        len(st.session_state.model_analyzer.X_train)-1,
-                        0
-                    )
-                    
-                    fig, ax = plt.subplots(figsize=(10, 3))
-                    shap.force_plot(
-                        st.session_state['explainer'].expected_value[1],
-                        shap_values[1][sample_idx],
-                        st.session_state.model_analyzer.X_train.iloc[sample_idx],
-                        matplotlib=True,
-                        show=False
-                    )
-                    st.pyplot(fig)
-                    plt.close()
-                  
     def prepare_data(self, data):
         """Prepare data for modeling"""
         features = ['age', 'gender', 'height', 'weight', 'ap_hi', 'ap_lo',
@@ -192,7 +120,7 @@ elif analysis_type == "SHAP Analysis":
         y_pred = model.predict(X_test)
         y_prob = model.predict_proba(X_test)[:, 1]
         
-        metrics = {
+        return model, {
             'accuracy': float(accuracy_score(y_test, y_pred)),
             'predictions': y_pred.tolist(),
             'probabilities': y_prob.tolist(),
@@ -201,100 +129,157 @@ elif analysis_type == "SHAP Analysis":
             'feature_importance': dict(zip(_self.feature_names, 
                                          model.feature_importances_.tolist()))
         }
-        
-        return model, metrics
 
-    def compute_shap_values(self, model, X_train):
-        """Wrapper method for SHAP computation"""
-        return compute_shap_values(self, X_train, model)
+    def analyze_shap(self, model, X_train):
+        """Compute and visualize SHAP values"""
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_train)
+            
+            # Store in session state
+            st.session_state['shap_values'] = shap_values
+            st.session_state['explainer'] = explainer
+            
+            # Summary plot
+            fig_summary, ax = plt.subplots(figsize=(10, 8))
+            shap.summary_plot(
+                shap_values[1],
+                X_train,
+                feature_names=self.feature_names,
+                show=False
+            )
+            st.pyplot(fig_summary)
+            plt.close()
+            
+            # Individual predictions
+            if st.checkbox("Show Individual Prediction Explanations"):
+                sample_idx = st.slider(
+                    "Select sample index",
+                    0,
+                    len(X_train)-1,
+                    0
+                )
+                
+                fig_force, ax = plt.subplots(figsize=(10, 3))
+                shap.force_plot(
+                    explainer.expected_value[1],
+                    shap_values[1][sample_idx],
+                    X_train.iloc[sample_idx],
+                    feature_names=self.feature_names,
+                    matplotlib=True,
+                    show=False
+                )
+                st.pyplot(fig_force)
+                plt.close()
+                
+        except Exception as e:
+            st.error(f"Error in SHAP analysis: {str(e)}")
 
 class SurvivalAnalyzer:
     @st.cache_data
     def analyze(self, data, group_col=None):
-        """Run survival analysis using custom implementation"""
+        """Run survival analysis"""
         fig = plt.figure(figsize=(10, 6))
         
-        if group_col:
-            for value in sorted(data[group_col].unique()):
-                mask = data[group_col] == value
-                group_data = data[mask]
-                
-                age_groups = pd.qcut(group_data['age'], q=20)
-                survival_prob = 1 - group_data.groupby(age_groups)['cardio'].mean()
+        try:
+            if group_col:
+                for value in sorted(data[group_col].unique()):
+                    mask = data[group_col] == value
+                    group_data = data[mask]
+                    age_groups = pd.qcut(group_data['age'], q=20)
+                    survival_prob = 1 - group_data.groupby(age_groups)['cardio'].mean()
+                    
+                    plt.plot(
+                        [group.right for group in survival_prob.index], 
+                        survival_prob.values,
+                        label=f'{group_col}={value}',
+                        marker='o',
+                        markersize=4
+                    )
+            else:
+                age_groups = pd.qcut(data['age'], q=20)
+                survival_prob = 1 - data.groupby(age_groups)['cardio'].mean()
                 
                 plt.plot(
                     [group.right for group in survival_prob.index], 
                     survival_prob.values,
-                    label=f'{group_col}={value}',
+                    label='Overall',
                     marker='o',
                     markersize=4
                 )
-        else:
-            age_groups = pd.qcut(data['age'], q=20)
-            survival_prob = 1 - data.groupby(age_groups)['cardio'].mean()
+                
+            plt.title('Survival Analysis')
+            plt.xlabel('Age (years)')
+            plt.ylabel('Survival probability')
+            plt.grid(True)
+            plt.legend()
+            return fig
             
-            plt.plot(
-                [group.right for group in survival_prob.index], 
-                survival_prob.values,
-                label='Overall',
-                marker='o',
-                markersize=4
-            )
-            
-        plt.title('Survival Analysis')
-        plt.xlabel('Age (years)')
-        plt.ylabel('Survival probability')
-        plt.grid(True)
-        plt.legend()
-        return fig
+        except Exception as e:
+            st.error(f"Error in survival analysis: {str(e)}")
+            return None
 
     @st.cache_data
     def analyze_risk_factors(self, data):
-        """Analyze risk factors impact on survival"""
-        risk_factors = ['cholesterol', 'gluc', 'smoke', 'alco', 'active']
-        results = {}
-        
-        for factor in risk_factors:
-            risk_high = data[data[factor] > 1]['cardio'].mean()
-            risk_low = data[data[factor] == 1]['cardio'].mean()
-            risk_ratio = risk_high / risk_low if risk_low > 0 else 1
-            results[factor] = risk_ratio
+        """Analyze risk factors impact"""
+        try:
+            risk_factors = ['cholesterol', 'gluc', 'smoke', 'alco', 'active']
+            results = {}
             
-        return pd.Series(results).sort_values(ascending=False)
+            for factor in risk_factors:
+                risk_high = data[data[factor] > 1]['cardio'].mean()
+                risk_low = data[data[factor] == 1]['cardio'].mean()
+                risk_ratio = risk_high / risk_low if risk_low > 0 else 1
+                results[factor] = risk_ratio
+                
+            return pd.Series(results).sort_values(ascending=False)
+            
+        except Exception as e:
+            st.error(f"Error in risk factor analysis: {str(e)}")
+            return None
 
 @st.cache_data
 def plot_confusion_matrix(y_true, y_pred):
-    """Plot confusion matrix with caching"""
-    cm = confusion_matrix(y_true, y_pred)
-    fig = plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-               xticklabels=['No Disease', 'Disease'],
-               yticklabels=['No Disease', 'Disease'])
-    plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    return fig
+    """Plot confusion matrix"""
+    try:
+        cm = confusion_matrix(y_true, y_pred)
+        fig = plt.figure(figsize=(8, 6))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=['No Disease', 'Disease'],
+                   yticklabels=['No Disease', 'Disease'])
+        plt.title('Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        return fig
+    except Exception as e:
+        st.error(f"Error plotting confusion matrix: {str(e)}")
+        return None
 
 @st.cache_data
 def plot_roc_curve(y_true, y_prob):
-    """Plot ROC curve with caching"""
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    roc_auc = auc(fpr, tpr)
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=fpr, y=tpr,
-                           name=f'ROC curve (AUC = {roc_auc:.2f})'))
-    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1],
-                           line=dict(dash='dash'), name='Random'))
-    fig.update_layout(
-        title='ROC Curve',
-        xaxis_title='False Positive Rate',
-        yaxis_title='True Positive Rate',
-        width=800, height=500
-    )
-    return fig
+    """Plot ROC curve"""
+    try:
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        roc_auc = auc(fpr, tpr)
+        
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=fpr, y=tpr,
+                               name=f'ROC curve (AUC = {roc_auc:.2f})'))
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1],
+                               line=dict(dash='dash'), name='Random'))
+        fig.update_layout(
+            title='ROC Curve',
+            xaxis_title='False Positive Rate',
+            yaxis_title='True Positive Rate',
+            width=800, height=500
+        )
+        return fig
+    except Exception as e:
+        st.error(f"Error plotting ROC curve: {str(e)}")
+        return None
 
 def main():
+    # Display header
     st.markdown("""
         <div class="gif-container">
             <img src="https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/Transformer%20ExplainableAI.gif" 
@@ -304,11 +289,13 @@ def main():
 
     st.title("🫀 Advanced Heart Disease Analysis Dashboard")
 
+    # Initialize session state
     if 'model_analyzer' not in st.session_state:
         st.session_state.model_analyzer = ModelAnalyzer()
     if 'survival_analyzer' not in st.session_state:
         st.session_state.survival_analyzer = SurvivalAnalyzer()
 
+    # Sidebar controls
     with st.sidebar:
         st.header("📊 Analysis Controls")
         
@@ -321,10 +308,12 @@ def main():
         n_estimators = st.slider("Number of trees", 50, 200, 100)
         max_depth = st.slider("Maximum tree depth", 5, 20, 10)
 
-    data = load_data()
+    # Load data
+    data = DataLoader.load_data()
     if data is None:
         return
 
+    # Display selected analysis
     if analysis_type == "Data Overview":
         st.header("📋 Data Overview")
         
@@ -368,30 +357,39 @@ def main():
         if st.button("Run Analysis"):
             progress = st.progress(0)
             
+            # Prepare data
             X_train, X_test, y_train, y_test = st.session_state.model_analyzer.prepare_data(data)
             progress.progress(25)
             
+            # Train model and compute metrics
             model, metrics = st.session_state.model_analyzer.compute_metrics(
                 X_train, X_test, y_train, y_test, n_estimators, max_depth
             )
             progress.progress(50)
             
+            # Store model for SHAP analysis
             st.session_state['current_model'] = model
-            st.session_state['current_X_train'] = X_train
-            
             progress.progress(100)
             
+            # Display metrics
             col1, col2, col3 = st.columns(3)
             col1.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
             col2.metric("CV Mean", f"{np.mean(metrics['cv_scores']):.2%}")
             col3.metric("CV Std", f"{np.std(metrics['cv_scores']):.2%}")
             
+            # Display ROC and Confusion Matrix
             col1, col2 = st.columns(2)
             with col1:
-                st.plotly_chart(plot_roc_curve(y_test, metrics['probabilities']))
+                roc_fig = plot_roc_curve(y_test, metrics['probabilities'])
+                if roc_fig:
+                    st.plotly_chart(roc_fig)
             with col2:
-                st.pyplot(plot_confusion_matrix(y_test, metrics['predictions']))
+                conf_matrix = plot_confusion_matrix(y_test, metrics['predictions'])
+                if conf_matrix:
+                    st.pyplot(conf_matrix)
+                    plt.close()
             
+            # Feature importance plot
             importance_df = pd.DataFrame({
                 'Feature': st.session_state.model_analyzer.feature_names,
                 'Importance': list(metrics['feature_importance'].values())
@@ -410,39 +408,12 @@ def main():
             if 'current_model' not in st.session_state:
                 st.warning("Please run the Model Performance analysis first!")
                 return
-                
+            
             with st.spinner("Computing SHAP values..."):
-                shap_values, feature_names = st.session_state.model_analyzer.compute_shap_values(
+                st.session_state.model_analyzer.analyze_shap(
                     st.session_state['current_model'],
                     st.session_state.model_analyzer.X_train
                 )
-                
-                if shap_values is not None:
-                    st.subheader("SHAP Summary Plot")
-                    fig = plt.figure(figsize=(10, 8))
-                    shap.summary_plot(
-                        shap_values[1], 
-                        st.session_state.model_analyzer.X_train,
-                        feature_names=feature_names,
-                        show=False
-                    )
-                    st.pyplot(fig)
-                    plt.close()
-
-                    # Add SHAP force plot for individual predictions
-                    st.subheader("Individual Prediction Explanation")
-                    sample_idx = st.slider("Select sample index", 0, len(st.session_state.model_analyzer.X_train)-1, 0)
-                    
-                    fig = plt.figure(figsize=(10, 3))
-                    shap.force_plot(
-                        explainer.expected_value[1],
-                        shap_values[1][sample_idx],
-                        st.session_state.model_analyzer.X_train.iloc[sample_idx],
-                        matplotlib=True,
-                        show=False
-                    )
-                    st.pyplot(fig)
-                    plt.close()
 
     elif analysis_type == "Feature Engineering":
         st.header("🔧 Feature Engineering")
@@ -454,6 +425,7 @@ def main():
         - **MAP (Mean Arterial Pressure)**: Average blood pressure during cardiac cycle
         """)
         
+        # Interactive feature analysis
         st.subheader("Interactive Feature Analysis")
         col1, col2 = st.columns(2)
         with col1:
@@ -468,6 +440,7 @@ def main():
                         labels={'cardio': 'Heart Disease'})
         st.plotly_chart(fig)
         
+        # Correlation analysis
         st.subheader("Feature Correlations")
         corr_matrix = data.corr()
         fig = plt.figure(figsize=(12, 8))
@@ -499,8 +472,9 @@ def main():
                         data,
                         None if group_col == 'None' else group_col
                     )
-                    st.pyplot(fig)
-                    plt.close()
+                    if fig:
+                        st.pyplot(fig)
+                        plt.close()
                     
                     if group_col != 'None':
                         st.subheader(f"Risk Analysis for {group_col}")
@@ -531,27 +505,27 @@ def main():
                 with st.spinner("Analyzing risk factors..."):
                     risk_scores = st.session_state.survival_analyzer.analyze_risk_factors(data)
                     
-                    fig = px.bar(
-                        x=risk_scores.index,
-                        y=risk_scores.values,
-                        title="Risk Factor Impact Analysis",
-                        labels={'x': 'Risk Factor', 'y': 'Risk Ratio'},
-                        color=risk_scores.values,
-                        color_continuous_scale='Reds'
-                    )
-                    st.plotly_chart(fig)
-                    
-                    st.write("""
-                    ### Interpretation:
-                    - Risk Ratio > 1: Increased risk of heart disease
-                    - Risk Ratio = 1: No effect
-                    - Risk Ratio < 1: Decreased risk of heart disease
-                    """)
+                    if risk_scores is not None:
+                        fig = px.bar(
+                            x=risk_scores.index,
+                            y=risk_scores.values,
+                            title="Risk Factor Impact Analysis",
+                            labels={'x': 'Risk Factor', 'y': 'Risk Ratio'},
+                            color=risk_scores.values,
+                            color_continuous_scale='Reds'
+                        )
+                        st.plotly_chart(fig)
+                        
+                        st.write("""
+                        ### Interpretation:
+                        - Risk Ratio > 1: Increased risk of heart disease
+                        - Risk Ratio = 1: No effect
+                        - Risk Ratio < 1: Decreased risk of heart disease
+                        """)
 
+    # Footer
     st.markdown("---")
     st.caption("Heart Disease Analysis Dashboard | Version 2.0")
 
 if __name__ == "__main__":
     main()
-
-      
