@@ -88,7 +88,7 @@ def load_data():
         st.error(f"Error loading data: {str(e)}")
         return None
 
-@st.cache_data
+
 def compute_shap_values(_self, X_train, model):
     """Compute SHAP values with caching"""
     try:
