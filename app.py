@@ -88,6 +88,19 @@ def load_data():
         st.error(f"Error loading data: {str(e)}")
         return None
 
+@st.cache_data
+def compute_shap_values(_self, X_train, model):
+    """Compute SHAP values with caching"""
+    try:
+        # Convert DataFrame to numpy array for consistent hashing
+        X_train_array = X_train.values if isinstance(X_train, pd.DataFrame) else X_train
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_train_array)
+        return shap_values, X_train.columns if isinstance(X_train, pd.DataFrame) else None
+    except Exception as e:
+        st.error(f"Error computing SHAP values: {str(e)}")
+        return None, None
+
 class ModelAnalyzer:
     def __init__(self):
         self.model = None
@@ -103,7 +116,7 @@ class ModelAnalyzer:
                    'cholesterol', 'gluc', 'smoke', 'alco', 'active',
                    'bmi', 'pulse_pressure', 'map']
         
-        X = data[features].copy()  # Create a copy to avoid modifying original
+        X = data[features].copy()
         y = data['cardio'].copy()
         self.feature_names = features
         X_scaled = self.scaler.fit_transform(X)
@@ -113,7 +126,6 @@ class ModelAnalyzer:
     @st.cache_data
     def compute_metrics(_self, X_train, X_test, y_train, y_test, n_estimators, max_depth):
         """Train model and compute metrics with caching"""
-        # Create and train model
         model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -122,14 +134,12 @@ class ModelAnalyzer:
         )
         model.fit(X_train, y_train)
         
-        # Generate predictions
         y_pred = model.predict(X_test)
         y_prob = model.predict_proba(X_test)[:, 1]
         
-        # Calculate metrics
         metrics = {
-            'accuracy': float(accuracy_score(y_test, y_pred)),  # Convert to float for caching
-            'predictions': y_pred.tolist(),  # Convert to list for caching
+            'accuracy': float(accuracy_score(y_test, y_pred)),
+            'predictions': y_pred.tolist(),
             'probabilities': y_prob.tolist(),
             'cv_scores': cross_val_score(model, X_test, y_test, cv=5).tolist(),
             'report': classification_report(y_test, y_pred, output_dict=True),
@@ -139,28 +149,9 @@ class ModelAnalyzer:
         
         return model, metrics
 
-    @st.cache_data
-    def compute_shap_values(_self, model, X_train):
-        """Compute SHAP values with caching"""
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_train)
-        return shap_values
-
-    @st.cache_data
-    def generate_metrics(self, X_test, y_test):
-        """Generate model metrics with caching"""
-        y_pred = self.model.predict(X_test)
-        y_prob = self.model.predict_proba(X_test)[:, 1]
-        
-        return {
-            'accuracy': accuracy_score(y_test, y_pred),
-            'predictions': y_pred,
-            'probabilities': y_prob,
-            'cv_scores': cross_val_score(self.model, X_test, y_test, cv=5),
-            'report': classification_report(y_test, y_pred, output_dict=True),
-            'feature_importance': dict(zip(self.feature_names, 
-                                        self.model.feature_importances_))
-        }
+    def compute_shap_values(self, model, X_train):
+        """Wrapper method for SHAP computation"""
+        return compute_shap_values(self, X_train, model)
 
 class SurvivalAnalyzer:
     @st.cache_data
@@ -173,7 +164,6 @@ class SurvivalAnalyzer:
                 mask = data[group_col] == value
                 group_data = data[mask]
                 
-                # Calculate survival curve
                 age_groups = pd.qcut(group_data['age'], q=20)
                 survival_prob = 1 - group_data.groupby(age_groups)['cardio'].mean()
                 
@@ -210,7 +200,6 @@ class SurvivalAnalyzer:
         results = {}
         
         for factor in risk_factors:
-            # Calculate risk ratio
             risk_high = data[data[factor] > 1]['cardio'].mean()
             risk_low = data[data[factor] == 1]['cardio'].mean()
             risk_ratio = risk_high / risk_low if risk_low > 0 else 1
@@ -251,7 +240,6 @@ def plot_roc_curve(y_true, y_prob):
     return fig
 
 def main():
-    # Add GIF at the top
     st.markdown("""
         <div class="gif-container">
             <img src="https://raw.githubusercontent.com/datascintist-abusufian/post-hoc-explainer/main/Transformer%20ExplainableAI.gif" 
@@ -261,13 +249,11 @@ def main():
 
     st.title("🫀 Advanced Heart Disease Analysis Dashboard")
 
-    # Initialize session state
     if 'model_analyzer' not in st.session_state:
         st.session_state.model_analyzer = ModelAnalyzer()
     if 'survival_analyzer' not in st.session_state:
         st.session_state.survival_analyzer = SurvivalAnalyzer()
 
-    # Sidebar
     with st.sidebar:
         st.header("📊 Analysis Controls")
         
@@ -280,12 +266,10 @@ def main():
         n_estimators = st.slider("Number of trees", 50, 200, 100)
         max_depth = st.slider("Maximum tree depth", 5, 20, 10)
 
-    # Load data once
     data = load_data()
     if data is None:
         return
 
-    # Display selected analysis
     if analysis_type == "Data Overview":
         st.header("📋 Data Overview")
         
@@ -329,25 +313,19 @@ def main():
         if st.button("Run Analysis"):
             progress = st.progress(0)
             
-            # Prepare data
-            progress.progress(25)
             X_train, X_test, y_train, y_test = st.session_state.model_analyzer.prepare_data(data)
+            progress.progress(25)
             
-            # Train model and compute metrics
-            progress.progress(50)
             model, metrics = st.session_state.model_analyzer.compute_metrics(
                 X_train, X_test, y_train, y_test, n_estimators, max_depth
             )
+            progress.progress(50)
             
-            progress.progress(75)
-            
-            # Store model in session state for SHAP analysis
             st.session_state['current_model'] = model
             st.session_state['current_X_train'] = X_train
             
             progress.progress(100)
             
-            # Display results
             col1, col2, col3 = st.columns(3)
             col1.metric("Model Accuracy", f"{metrics['accuracy']:.2%}")
             col2.metric("CV Mean", f"{np.mean(metrics['cv_scores']):.2%}")
@@ -359,7 +337,6 @@ def main():
             with col2:
                 st.pyplot(plot_confusion_matrix(y_test, metrics['predictions']))
             
-            # Feature importance
             importance_df = pd.DataFrame({
                 'Feature': st.session_state.model_analyzer.feature_names,
                 'Importance': list(metrics['feature_importance'].values())
@@ -380,17 +357,37 @@ def main():
                 return
                 
             with st.spinner("Computing SHAP values..."):
-                shap_values = st.session_state.model_analyzer.compute_shap_values(
+                shap_values, feature_names = st.session_state.model_analyzer.compute_shap_values(
                     st.session_state['current_model'],
-                    st.session_state['current_X_train']
+                    st.session_state.model_analyzer.X_train
                 )
                 
-                st.subheader("SHAP Summary Plot")
-                fig = plt.figure(figsize=(10, 8))
-                shap.summary_plot(shap_values[1], 
-                                st.session_state.model_analyzer.X_train, 
-                                show=False)
-                st.pyplot(fig)
+                if shap_values is not None:
+                    st.subheader("SHAP Summary Plot")
+                    fig = plt.figure(figsize=(10, 8))
+                    shap.summary_plot(
+                        shap_values[1], 
+                        st.session_state.model_analyzer.X_train,
+                        feature_names=feature_names,
+                        show=False
+                    )
+                    st.pyplot(fig)
+                    plt.close()
+
+                    # Add SHAP force plot for individual predictions
+                    st.subheader("Individual Prediction Explanation")
+                    sample_idx = st.slider("Select sample index", 0, len(st.session_state.model_analyzer.X_train)-1, 0)
+                    
+                    fig = plt.figure(figsize=(10, 3))
+                    shap.force_plot(
+                        explainer.expected_value[1],
+                        shap_values[1][sample_idx],
+                        st.session_state.model_analyzer.X_train.iloc[sample_idx],
+                        matplotlib=True,
+                        show=False
+                    )
+                    st.pyplot(fig)
+                    plt.close()
 
     elif analysis_type == "Feature Engineering":
         st.header("🔧 Feature Engineering")
@@ -402,7 +399,6 @@ def main():
         - **MAP (Mean Arterial Pressure)**: Average blood pressure during cardiac cycle
         """)
         
-        # Interactive feature analysis
         st.subheader("Interactive Feature Analysis")
         col1, col2 = st.columns(2)
         with col1:
@@ -417,13 +413,13 @@ def main():
                         labels={'cardio': 'Heart Disease'})
         st.plotly_chart(fig)
         
-        # Correlation analysis
         st.subheader("Feature Correlations")
         corr_matrix = data.corr()
         fig = plt.figure(figsize=(12, 8))
         sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0)
         plt.title("Feature Correlation Matrix")
         st.pyplot(fig)
+        plt.close()
 
     else:  # Survival Analysis
         st.header("⏳ Survival Analysis")
@@ -449,13 +445,13 @@ def main():
                         None if group_col == 'None' else group_col
                     )
                     st.pyplot(fig)
+                    plt.close()
                     
                     if group_col != 'None':
                         st.subheader(f"Risk Analysis for {group_col}")
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            # Distribution of risk factor
                             counts = data[group_col].value_counts().sort_index()
                             fig = px.bar(
                                 x=counts.index,
@@ -466,7 +462,6 @@ def main():
                             st.plotly_chart(fig)
                         
                         with col2:
-                            # Disease prevalence by group
                             prev = data.groupby(group_col)['cardio'].mean() * 100
                             fig = px.bar(
                                 x=prev.index,
@@ -498,9 +493,10 @@ def main():
                     - Risk Ratio < 1: Decreased risk of heart disease
                     """)
 
-    # Footer
     st.markdown("---")
     st.caption("Heart Disease Analysis Dashboard | Version 2.0")
 
 if __name__ == "__main__":
     main()
+
+      
