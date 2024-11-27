@@ -89,27 +89,82 @@ def load_data():
         return None
 
 
-def compute_shap_values(_self, X_train, model):
-    """Compute SHAP values with caching"""
+# Remove the cached decorator from compute_shap_values function
+def compute_shap_values(X_train, model):
+    """Compute SHAP values without caching"""
     try:
-        # Convert DataFrame to numpy array for consistent hashing
-        X_train_array = X_train.values if isinstance(X_train, pd.DataFrame) else X_train
+        # Create explainer
         explainer = shap.TreeExplainer(model)
+        
+        # Compute SHAP values
+        X_train_array = X_train.values if isinstance(X_train, pd.DataFrame) else X_train
         shap_values = explainer.shap_values(X_train_array)
+        
+        # Store explainer in session state for force plots
+        st.session_state['explainer'] = explainer
+        
         return shap_values, X_train.columns if isinstance(X_train, pd.DataFrame) else None
     except Exception as e:
         st.error(f"Error computing SHAP values: {str(e)}")
         return None, None
 
 class ModelAnalyzer:
-    def __init__(self):
-        self.model = None
-        self.scaler = StandardScaler()
-        self.feature_names = None
-        self.X_train = None
-        self.explainer = None
-        self.shap_values = None
+    def compute_shap_values(self, model, X_train):
+        """Direct computation of SHAP values without caching"""
+        return compute_shap_values(X_train, model)
 
+# Modified SHAP Analysis section in main():
+elif analysis_type == "SHAP Analysis":
+    st.header("🎯 SHAP Analysis")
+    
+    if st.button("Generate SHAP Analysis"):
+        if 'current_model' not in st.session_state:
+            st.warning("Please run the Model Performance analysis first!")
+            return
+            
+        with st.spinner("Computing SHAP values..."):
+            shap_values, feature_names = compute_shap_values(
+                st.session_state.model_analyzer.X_train,
+                st.session_state['current_model']
+            )
+            
+            if shap_values is not None:
+                # Store values in session state for reuse
+                st.session_state['shap_values'] = shap_values
+                
+                # Summary plot
+                st.subheader("SHAP Summary Plot")
+                fig, ax = plt.subplots(figsize=(10, 8))
+                shap.summary_plot(
+                    shap_values[1],
+                    st.session_state.model_analyzer.X_train,
+                    feature_names=feature_names,
+                    show=False
+                )
+                st.pyplot(fig)
+                plt.close()
+
+                # Individual prediction explanation
+                if st.checkbox("Show Individual Prediction Explanations"):
+                    st.subheader("Individual Prediction Explanation")
+                    sample_idx = st.slider(
+                        "Select sample index",
+                        0,
+                        len(st.session_state.model_analyzer.X_train)-1,
+                        0
+                    )
+                    
+                    fig, ax = plt.subplots(figsize=(10, 3))
+                    shap.force_plot(
+                        st.session_state['explainer'].expected_value[1],
+                        shap_values[1][sample_idx],
+                        st.session_state.model_analyzer.X_train.iloc[sample_idx],
+                        matplotlib=True,
+                        show=False
+                    )
+                    st.pyplot(fig)
+                    plt.close()
+                  
     def prepare_data(self, data):
         """Prepare data for modeling"""
         features = ['age', 'gender', 'height', 'weight', 'ap_hi', 'ap_lo',
